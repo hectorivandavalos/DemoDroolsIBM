@@ -1,0 +1,157 @@
+package resources.rules
+
+import java.math.*;
+import java.math.BigDecimal;
+import java.util.*;
+import mx.com.metlife.reservas.calc.domain.*;
+import mx.com.metlife.reservas.main.domain.*;
+import mx.com.metlife.reservas.util.Estatus;
+import mx.com.metlife.reservas.util.FechasUtils;
+import mx.com.metlife.reservas.util.FormatterCapas;
+import org.joda.time.LocalDate;
+
+
+//********************************************************************************
+// RF003 VALORES DE LA CAPA
+//********************************************************************************
+
+rule "Marcar capa para calcular valores"
+agenda-group "orquestador-analisis-capas"
+when
+    $serv : ServicioMap(this["#calculoValoresCapa"] == null ,
+                        this["SERVICIO_MOTIVO"] not in("0-0", "2211-731", "2211-732", "2211-733", "2231-633",
+                                              "2285-253","2200-252", "2286-282", "2286-281", "2201-246"))
+then
+   //log.orquestadorDebug("si calcular valores para "+$serv.get("ID_SERV")+" "+$serv.get("SERVICIO_MOTIVO"));
+    modify($serv){
+          put("#calculoValoresCapa", Estatus.MARCADA)
+    }
+end
+
+rule "Capas positivas para calculos"
+agenda-group "orquestador-analisis-capas"
+when
+    $serv : ServicioMap(this["#capaPositiva"] == null ,
+                        this["SERVICIO_MOTIVO"] in ("0-0", "2208-631", "2214-633", "2211-731", "2211-732", "2214-634",
+                                                    "2211-733", "2231-633", "2231-245", "9999-999")
+                        || this["CVE_SERVICIO"] in (2308) )
+then
+    modify($serv){
+          put("#capaPositiva", Estatus.MARCADA)
+    }
+end
+
+
+
+rule "Valores de la capa - cobertura"
+agenda-group "orquestador-analisis-capas"
+when
+    $serv : ServicioMap(this["#calculoValoresCapa"] == Estatus.MARCADA)
+    $cob : CoberturaMap(this["ID_SERV"] == $serv["ID_SERV"], this["#calculoValoresCapa"] == null)
+then
+    //log.orquestadorDebug("si calcular valores para "+$cob.info());
+    modify($cob){
+          put("#calculoValoresCapa", Estatus.MARCADA)
+    }
+end
+
+
+rule "Valores de la capa"
+  agenda-group "orquestador-analisis-capas"
+	when
+      $serv : ServicioMap(this["#calculoValoresCapa"] == Estatus.MARCADA)
+		  $servAnt : ServicioMap(this["ID_SERV"] == $serv["ID_SERV_ANT"])
+	then
+      //log.orquestadorDebug("Ejecutando RF003 Valores de la capa "+$serv.get("ID_SERV")+" "+$serv.get("#primaOrig")+"-"+$servAnt.get("#primaOrig"));
+      BigDecimal prima = $serv.cDec("#primaOrig").subtract($servAnt.cDec("#primaOrig"));
+      BigDecimal primaExc = $serv.cDec("#primaExcOrig").subtract($servAnt.cDec("#primaExcOrig"));
+	    modify($serv){
+            put("PRIMA_COBRO", prima),
+            put("PRIMA_EXC", primaExc),
+            put("#calculoValoresCapa", Estatus.EJECUTADA)
+	    }
+end
+
+rule "Valores Iniciales Capa Inicial Cambio Plan"
+    salience 200
+    agenda-group "orquestador-analisis-capas"
+    when
+       $serv : ServicioMap(this["SERVICIO_MOTIVO"] in ("2211-731", "2211-732", "2211-733") )
+       $cob : CoberturaMap(this["ID_SERV"] == $serv["ID_SERV"], this["#calculoValoresCapa"] (==null || == Estatus.MARCADA))
+    then
+      modify($cob){
+         put("#primaOrig", $cob.cDec("PRIMA")),
+         put("#primaBitOrig", $cob.cDec("PRIMA_BIT")),
+         put("#extraPrimaBitOrig", $cob.cDec("EXTRA_PRIMA_BIT")),
+         put("#primaMedOrig", $cob.cDec("MEDICO")),
+         put("#primaOcupOrig", $cob.cDec("OCUPACIONAL")),
+         put("#sumaAseguradaOrig", $cob.cDec("SUMA_ASEGURADA")),
+         put("#calculoValoresCapa", Estatus.EJECUTADA)
+      }
+      //log.orquestadorDebug("Valores capa inicial 2 "+$cob);
+end
+
+rule "Valores Iniciales Capa Inicial"
+    salience 100
+    agenda-group "orquestador-analisis-capas"
+    when
+       $cob : CoberturaMap(this["#calculoValoresCapa"] (==null || == Estatus.MARCADA))
+       not (exists (CoberturaMap(this.key == $cob.key, this["STATUS"] == "V", this["ID_SERV"] == ($cob["ID_SERV"] - 1) )))
+    then
+      modify($cob){
+         put("#primaOrig", $cob.cDec("PRIMA")),
+         put("#primaBitOrig", $cob.cDec("PRIMA_BIT")),
+         put("#extraPrimaBitOrig", $cob.cDec("EXTRA_PRIMA_BIT")),
+         put("#primaMedOrig", $cob.cDec("MEDICO")),
+         put("#primaOcupOrig", $cob.cDec("OCUPACIONAL")),
+         put("#sumaAseguradaOrig", $cob.cDec("SUMA_ASEGURADA")),
+         put("#calculoValoresCapa", Estatus.EJECUTADA)
+      }
+      //log.orquestadorDebug("Valores capa inicial 2 "+$cob);
+end
+
+rule "Valores de la capa cobertura"
+  agenda-group "orquestador-analisis-capas"
+	when
+    $cob : CoberturaMap(this["#calculoValoresCapa"] == Estatus.MARCADA)
+		$cobAnt : CoberturaMap(this["CVE_COBERTURA"] == $cob["CVE_COBERTURA"], this["ID_SERV"] < $cob["ID_SERV"]  ,this["#calculoValoresCapa"] == Estatus.EJECUTADA)
+    not(CoberturaMap(this["CVE_COBERTURA"] == $cob["CVE_COBERTURA"], this["ID_SERV"] < $cob["ID_SERV"], this["#calculoValoresCapa"] == Estatus.EJECUTADA, this["ID_SERV"] > $cobAnt["ID_SERV"]))
+	then
+    try {
+       //log.orquestadorDebug("Ejecutando RF003 Valores de la cobertura "+$cob.info());
+       //log.orquestadorDebug("Ejecutando RF003 Valores de la cober ANT "+$cobAnt.info()+" "+$cobAnt.get("#calculoValoresCapa")+ " "+$cob.cDec("PRIMA") +" "+$cobAnt.cDec("#primaOrig"));
+       BigDecimal sa = $cob.cDec("SUMA_ASEGURADA").subtract($cobAnt.cDec("#sumaAseguradaOrig"));
+       BigDecimal prima = $cob.cDec("PRIMA").subtract($cobAnt.cDec("#primaOrig"));
+       BigDecimal medico = $cob.cDec("MEDICO").subtract($cobAnt.cDec("#primaMedOrig"));
+       BigDecimal ocupacional = $cob.cDec("OCUPACIONAL").subtract($cobAnt.cDec("#primaOcupOrig"));
+       BigDecimal bit = $cob.cDecDef("PRIMA_BIT").subtract($cobAnt.cDecDef("#primaBitOrig"));
+       BigDecimal extraBit = $cob.cDecDef("EXTRA_PRIMA_BIT").subtract($cobAnt.cDecDef("#extraPrimaBitOrig"));
+       modify($cob){
+
+              put("#primaOrig", $cob.cDec("PRIMA")),
+              put("#primaMedOrig", $cob.cDec("MEDICO")),
+              put("#primaOcupOrig", $cob.cDec("OCUPACIONAL")),
+              put("#sumaAseguradaOrig", $cob.cDec("SUMA_ASEGURADA")),
+              put("#primaBitOrig", $cob.cDec("PRIMA_BIT")),
+              put("#extraPrimaBitOrig", $cob.cDec("EXTRA_PRIMA_BIT")),
+
+              put("PRIMA", prima.abs()),
+              put("PRIMA_BIT", bit.abs()),
+              put("EXTRA_PRIMA_BIT", extraBit.abs()),
+              put("MEDICO", medico),
+              put("OCUPACIONAL", ocupacional),
+              put("SUMA_ASEGURADA", sa.abs()),
+
+              put("#calculoValoresCapa", Estatus.EJECUTADA)
+       }
+
+       //log.orquestadorDebug("Ejecutado RF003 Valores de la cober "+$cob.info()+" "+bit);
+    } catch (Exception e) {
+        throw new RuntimeException ("No se encontr\u00F3 un valor para la cobertura. Servicio: "+$cob.cString("SERVICIO_MOTIVO")+
+                            ", N\u00FAmero "+$cob.cInt("NUM_SERVICIO")+", Cobertura "+$cob.getKey()+
+                            ", Plan "+$cob.cString("PLAN")+", Edad: "+$cob.cInt("EDAD")+
+                            ", G\u00E9nero: "+$cob.cString("SEXO")+", H\u00E1bito: "+$cob.cString("HABITO"));
+    }
+
+end
+
