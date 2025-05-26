@@ -1,0 +1,17 @@
+import mx.com.metlife.calculadora.model.*
+import mx.com.metlife.calculadora.util.Estatus
+import java.util.*
+import java.math.*
+
+rule "cobertura a calcular coi"
+dialect "mvel"
+agenda-group "coi"
+when
+	$mcCob : MesCalculoCobertura()
+then
+	System.out.println( "COI ----> " + $mcCob.cobertura.info());
+end
+
+
+
+
